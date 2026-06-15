@@ -134,3 +134,316 @@ Senior engineer thinking starts with system behavior and failure boundaries:
 - "What assumptions will become expensive to change later?"
 
 For this project, the senior mental model is simple: define the task lifecycle clearly, enforce valid data at the API boundary, keep response behavior predictable, and avoid adding features before the base CRUD contract is solid.
+
+## Phase 3: API Design
+
+This phase defines the HTTP contract for the Task Management CRUD API. It does not include endpoint logic, database access, authentication, or handler implementation.
+
+Base path:
+
+```text
+/api/v1
+```
+
+### Task API
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| POST | `/api/v1/tasks` | Create a task |
+| GET | `/api/v1/tasks` | List tasks |
+| GET | `/api/v1/tasks/{id}` | Retrieve one task |
+| PATCH | `/api/v1/tasks/{id}` | Partially update one task |
+| DELETE | `/api/v1/tasks/{id}` | Delete one task |
+
+### Field Ownership
+
+Client-owned fields are accepted in create and update request bodies:
+
+- `title`
+- `description`
+- `status`
+- `priority`
+- `due_date`
+
+Server-owned fields are generated or controlled by the API and must not be accepted from clients:
+
+- `id`
+- `created_at`
+- `updated_at`
+
+The server sets `id`, `created_at`, and `updated_at` when a task is created. The server updates `updated_at` whenever a task changes. Clients may read these fields in responses but cannot write them.
+
+### Task Representation
+
+Task response example:
+
+```json
+{
+  "id": "task_01HYZ7Y6D8P6M4C7R9K2Q3F5A1",
+  "title": "Write API contract",
+  "description": "Define request and response shapes before implementing handlers.",
+  "status": "in_progress",
+  "priority": "high",
+  "due_date": "2026-07-01",
+  "created_at": "2026-06-15T10:30:00Z",
+  "updated_at": "2026-06-15T11:00:00Z"
+}
+```
+
+Valid `status` values:
+
+- `todo`
+- `in_progress`
+- `done`
+
+Valid `priority` values:
+
+- `low`
+- `medium`
+- `high`
+
+`due_date` is optional and should use `YYYY-MM-DD` format.
+
+### Create Task
+
+```text
+POST /api/v1/tasks
+```
+
+Request body:
+
+```json
+{
+  "title": "Write API contract",
+  "description": "Define request and response shapes before implementing handlers.",
+  "status": "in_progress",
+  "priority": "high",
+  "due_date": "2026-07-01"
+}
+```
+
+Request rules:
+
+- `title` is required and must not be empty.
+- `description` is optional.
+- `status` is optional and defaults to `todo`.
+- `priority` is optional and defaults to `medium`.
+- `due_date` is optional.
+- `id`, `created_at`, and `updated_at` are ignored or rejected because they are server-owned.
+
+Success response:
+
+```text
+201 Created
+```
+
+```json
+{
+  "id": "task_01HYZ7Y6D8P6M4C7R9K2Q3F5A1",
+  "title": "Write API contract",
+  "description": "Define request and response shapes before implementing handlers.",
+  "status": "in_progress",
+  "priority": "high",
+  "due_date": "2026-07-01",
+  "created_at": "2026-06-15T10:30:00Z",
+  "updated_at": "2026-06-15T10:30:00Z"
+}
+```
+
+Possible status codes:
+
+- `201 Created`: task created.
+- `400 Bad Request`: malformed JSON or invalid field type.
+- `422 Unprocessable Entity`: request JSON is valid but violates business rules.
+- `500 Internal Server Error`: unexpected server failure.
+
+### List Tasks
+
+```text
+GET /api/v1/tasks?page=1&per_page=20
+```
+
+Success response:
+
+```text
+200 OK
+```
+
+```json
+{
+  "data": [
+    {
+      "id": "task_01HYZ7Y6D8P6M4C7R9K2Q3F5A1",
+      "title": "Write API contract",
+      "description": "Define request and response shapes before implementing handlers.",
+      "status": "in_progress",
+      "priority": "high",
+      "due_date": "2026-07-01",
+      "created_at": "2026-06-15T10:30:00Z",
+      "updated_at": "2026-06-15T11:00:00Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "per_page": 20,
+    "total": 1,
+    "total_pages": 1
+  }
+}
+```
+
+Pagination rules:
+
+- `page` is optional and defaults to `1`.
+- `per_page` is optional and defaults to `20`.
+- `per_page` must have a maximum limit, recommended as `100`.
+- `page` and `per_page` must be positive integers.
+- Responses must include pagination metadata even when the result set is empty.
+- The default sort order should be stable, such as newest tasks first by `created_at`.
+
+Pagination is required because task lists can grow without bound. Returning every task in one response can make the API slow, increase memory usage, create large network responses, and make client behavior unpredictable as data grows.
+
+Possible status codes:
+
+- `200 OK`: tasks returned.
+- `400 Bad Request`: invalid pagination query parameters.
+- `500 Internal Server Error`: unexpected server failure.
+
+### Get Task By ID
+
+```text
+GET /api/v1/tasks/{id}
+```
+
+Success response:
+
+```text
+200 OK
+```
+
+```json
+{
+  "id": "task_01HYZ7Y6D8P6M4C7R9K2Q3F5A1",
+  "title": "Write API contract",
+  "description": "Define request and response shapes before implementing handlers.",
+  "status": "in_progress",
+  "priority": "high",
+  "due_date": "2026-07-01",
+  "created_at": "2026-06-15T10:30:00Z",
+  "updated_at": "2026-06-15T11:00:00Z"
+}
+```
+
+Possible status codes:
+
+- `200 OK`: task returned.
+- `400 Bad Request`: invalid task ID format.
+- `404 Not Found`: task does not exist.
+- `500 Internal Server Error`: unexpected server failure.
+
+### Update Task
+
+```text
+PATCH /api/v1/tasks/{id}
+```
+
+Request body:
+
+```json
+{
+  "status": "done",
+  "priority": "medium"
+}
+```
+
+Request rules:
+
+- All fields are optional, but the body must include at least one client-owned field.
+- Only provided fields are changed.
+- Omitted fields keep their current values.
+- `title`, when provided, must not be empty.
+- `status`, when provided, must be one of the allowed status values.
+- `priority`, when provided, must be one of the allowed priority values.
+- `id`, `created_at`, and `updated_at` are ignored or rejected because they are server-owned.
+
+Success response:
+
+```text
+200 OK
+```
+
+```json
+{
+  "id": "task_01HYZ7Y6D8P6M4C7R9K2Q3F5A1",
+  "title": "Write API contract",
+  "description": "Define request and response shapes before implementing handlers.",
+  "status": "done",
+  "priority": "medium",
+  "due_date": "2026-07-01",
+  "created_at": "2026-06-15T10:30:00Z",
+  "updated_at": "2026-06-15T12:15:00Z"
+}
+```
+
+`PATCH` is used because the update operation is partial. Clients should be able to send only the fields they want to change without resending the full task representation. This reduces accidental overwrites and keeps update requests small.
+
+Possible status codes:
+
+- `200 OK`: task updated.
+- `400 Bad Request`: malformed JSON, invalid task ID format, or empty update body.
+- `404 Not Found`: task does not exist.
+- `422 Unprocessable Entity`: request JSON is valid but violates business rules.
+- `500 Internal Server Error`: unexpected server failure.
+
+### Delete Task
+
+```text
+DELETE /api/v1/tasks/{id}
+```
+
+Success response:
+
+```text
+204 No Content
+```
+
+The response body must be empty.
+
+Possible status codes:
+
+- `204 No Content`: task deleted.
+- `400 Bad Request`: invalid task ID format.
+- `404 Not Found`: task does not exist.
+- `500 Internal Server Error`: unexpected server failure.
+
+### Standard Error Format
+
+All error responses should use one stable JSON shape:
+
+```json
+{
+  "error": {
+    "code": "invalid_request",
+    "message": "Request body contains invalid fields.",
+    "details": {
+      "title": "title is required",
+      "status": "status must be one of: todo, in_progress, done"
+    }
+  }
+}
+```
+
+Error format rules:
+
+- `error.code` is a stable machine-readable string.
+- `error.message` is a human-readable summary.
+- `error.details` is optional and can hold field-specific validation messages.
+- Internal server details, SQL errors, stack traces, and implementation internals must not be returned to clients.
+
+Recommended error codes:
+
+- `invalid_json`
+- `invalid_request`
+- `validation_failed`
+- `not_found`
+- `internal_error`
