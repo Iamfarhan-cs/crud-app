@@ -134,3 +134,439 @@ Senior engineer thinking starts with system behavior and failure boundaries:
 - "What assumptions will become expensive to change later?"
 
 For this project, the senior mental model is simple: define the task lifecycle clearly, enforce valid data at the API boundary, keep response behavior predictable, and avoid adding features before the base CRUD contract is solid.
+
+## Phase 2: Project Architecture and Boundaries
+
+This phase establishes the Go project structure and the responsibility boundaries between packages. It does not implement complete CRUD behavior yet. The goal is to create a clean scaffold so later phases can add handlers, validation, persistence, and routing without mixing concerns.
+
+### Module Structure
+
+The project uses this structure:
+
+```text
+cmd/
+  api/
+    main.go
+internal/
+  config/
+    config.go
+  database/
+    postgres.go
+  task/
+    dto.go
+    errors.go
+    handler.go
+    model.go
+    repository.go
+    service.go
+go.mod
+README.md
+```
+
+### Package Responsibilities
+
+`cmd/api` is the application entry point.
+
+It should only compose the application:
+
+- Load configuration.
+- Prepare database connections.
+- Create repositories.
+- Create services.
+- Create handlers.
+- Start the HTTP server.
+
+It must not contain business rules, SQL queries, request parsing, or response formatting.
+
+`internal/config` owns runtime configuration.
+
+It should handle values such as:
+
+- Environment name.
+- HTTP port.
+- PostgreSQL connection string.
+
+Later phases can add real environment variable parsing and validation here. Other packages should receive configuration values instead of reading environment variables directly.
+
+`internal/database` owns database connection setup.
+
+It should be responsible for creating and managing database connections. It should not know task business rules, HTTP route details, or request/response shapes.
+
+`internal/task` owns the task feature.
+
+It is split into smaller files by responsibility:
+
+- `model.go`: domain entity and domain-level types such as `Task`, `Status`, and `Priority`.
+- `dto.go`: request and response shapes used by the API layer.
+- `errors.go`: stable task-specific errors.
+- `repository.go`: persistence interface for task storage.
+- `service.go`: business rules and use-case orchestration.
+- `handler.go`: HTTP request handling and route registration.
+
+### Dependency Direction
+
+Dependencies should flow inward:
+
+```text
+HTTP handler -> service -> repository interface -> repository implementation
+```
+
+The handler should translate HTTP requests into service calls. The service should enforce business behavior and coordinate persistence. The repository should hide storage details behind an interface.
+
+This keeps the business logic from depending on HTTP or database details. It also makes the system easier to test because handlers, services, and repositories can be tested separately.
+
+### Current Scaffold
+
+Phase 2 creates the architecture skeleton:
+
+- A Go module named `github.com/Iamfarhan-cs/crud-app`.
+- An API entry point in `cmd/api/main.go`.
+- Placeholder configuration loading in `internal/config`.
+- Placeholder PostgreSQL connection structure in `internal/database`.
+- Task domain types in `internal/task/model.go`.
+- API request and response DTOs in `internal/task/dto.go`.
+- Task-specific domain errors in `internal/task/errors.go`.
+- A task repository interface in `internal/task/repository.go`.
+- A task service that depends on the repository interface.
+- A task handler prepared for future route registration.
+
+The placeholders are intentional. They let the project define ownership boundaries before adding implementation details.
+
+### Phase 2 Non-Goals
+
+Phase 2 does not include:
+
+- Complete HTTP route registration.
+- CRUD handler logic.
+- Request validation.
+- PostgreSQL connection opening.
+- SQL queries or migrations.
+- Repository implementation.
+- Authentication.
+- Tests.
+- Deployment configuration.
+
+These are deferred so the project can first settle its internal shape. Once responsibilities are clear, later phases can add behavior in the correct layer instead of crowding everything into `main.go` or HTTP handlers.
+
+### Architecture Rules
+
+- Domain types should not contain HTTP parsing or SQL logic.
+- DTOs should describe external API shapes, not database tables.
+- Services should own business rules and use-case flow.
+- Repositories should own storage behavior behind interfaces.
+- Handlers should own HTTP status codes, JSON decoding, JSON encoding, and route wiring.
+- Configuration should be loaded once near application startup and passed into the components that need it.
+- Database setup should live in the database package, not inside handlers or services.
+
+## Phase 3: API Design
+
+This phase defines the HTTP contract for the Task Management CRUD API. It does not include endpoint logic, database access, authentication, or handler implementation.
+
+Base path:
+
+```text
+/api/v1
+```
+
+### Task API
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| POST | `/api/v1/tasks` | Create a task |
+| GET | `/api/v1/tasks` | List tasks |
+| GET | `/api/v1/tasks/{id}` | Retrieve one task |
+| PATCH | `/api/v1/tasks/{id}` | Partially update one task |
+| DELETE | `/api/v1/tasks/{id}` | Delete one task |
+
+### Field Ownership
+
+Client-owned fields are accepted in create and update request bodies:
+
+- `title`
+- `description`
+- `status`
+- `priority`
+- `due_date`
+
+Server-owned fields are generated or controlled by the API and must not be accepted from clients:
+
+- `id`
+- `created_at`
+- `updated_at`
+
+The server sets `id`, `created_at`, and `updated_at` when a task is created. The server updates `updated_at` whenever a task changes. Clients may read these fields in responses but cannot write them.
+
+### Task Representation
+
+Task response example:
+
+```json
+{
+  "id": "task_01HYZ7Y6D8P6M4C7R9K2Q3F5A1",
+  "title": "Write API contract",
+  "description": "Define request and response shapes before implementing handlers.",
+  "status": "in_progress",
+  "priority": "high",
+  "due_date": "2026-07-01",
+  "created_at": "2026-06-15T10:30:00Z",
+  "updated_at": "2026-06-15T11:00:00Z"
+}
+```
+
+Valid `status` values:
+
+- `todo`
+- `in_progress`
+- `done`
+
+Valid `priority` values:
+
+- `low`
+- `medium`
+- `high`
+
+`due_date` is optional and should use `YYYY-MM-DD` format.
+
+### Create Task
+
+```text
+POST /api/v1/tasks
+```
+
+Request body:
+
+```json
+{
+  "title": "Write API contract",
+  "description": "Define request and response shapes before implementing handlers.",
+  "status": "in_progress",
+  "priority": "high",
+  "due_date": "2026-07-01"
+}
+```
+
+Request rules:
+
+- `title` is required and must not be empty.
+- `description` is optional.
+- `status` is optional and defaults to `todo`.
+- `priority` is optional and defaults to `medium`.
+- `due_date` is optional.
+- `id`, `created_at`, and `updated_at` are ignored or rejected because they are server-owned.
+
+Success response:
+
+```text
+201 Created
+```
+
+```json
+{
+  "id": "task_01HYZ7Y6D8P6M4C7R9K2Q3F5A1",
+  "title": "Write API contract",
+  "description": "Define request and response shapes before implementing handlers.",
+  "status": "in_progress",
+  "priority": "high",
+  "due_date": "2026-07-01",
+  "created_at": "2026-06-15T10:30:00Z",
+  "updated_at": "2026-06-15T10:30:00Z"
+}
+```
+
+Possible status codes:
+
+- `201 Created`: task created.
+- `400 Bad Request`: malformed JSON or invalid field type.
+- `422 Unprocessable Entity`: request JSON is valid but violates business rules.
+- `500 Internal Server Error`: unexpected server failure.
+
+### List Tasks
+
+```text
+GET /api/v1/tasks?page=1&per_page=20
+```
+
+Success response:
+
+```text
+200 OK
+```
+
+```json
+{
+  "data": [
+    {
+      "id": "task_01HYZ7Y6D8P6M4C7R9K2Q3F5A1",
+      "title": "Write API contract",
+      "description": "Define request and response shapes before implementing handlers.",
+      "status": "in_progress",
+      "priority": "high",
+      "due_date": "2026-07-01",
+      "created_at": "2026-06-15T10:30:00Z",
+      "updated_at": "2026-06-15T11:00:00Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "per_page": 20,
+    "total": 1,
+    "total_pages": 1
+  }
+}
+```
+
+Pagination rules:
+
+- `page` is optional and defaults to `1`.
+- `per_page` is optional and defaults to `20`.
+- `per_page` must have a maximum limit, recommended as `100`.
+- `page` and `per_page` must be positive integers.
+- Responses must include pagination metadata even when the result set is empty.
+- The default sort order should be stable, such as newest tasks first by `created_at`.
+
+Pagination is required because task lists can grow without bound. Returning every task in one response can make the API slow, increase memory usage, create large network responses, and make client behavior unpredictable as data grows.
+
+Possible status codes:
+
+- `200 OK`: tasks returned.
+- `400 Bad Request`: invalid pagination query parameters.
+- `500 Internal Server Error`: unexpected server failure.
+
+### Get Task By ID
+
+```text
+GET /api/v1/tasks/{id}
+```
+
+Success response:
+
+```text
+200 OK
+```
+
+```json
+{
+  "id": "task_01HYZ7Y6D8P6M4C7R9K2Q3F5A1",
+  "title": "Write API contract",
+  "description": "Define request and response shapes before implementing handlers.",
+  "status": "in_progress",
+  "priority": "high",
+  "due_date": "2026-07-01",
+  "created_at": "2026-06-15T10:30:00Z",
+  "updated_at": "2026-06-15T11:00:00Z"
+}
+```
+
+Possible status codes:
+
+- `200 OK`: task returned.
+- `400 Bad Request`: invalid task ID format.
+- `404 Not Found`: task does not exist.
+- `500 Internal Server Error`: unexpected server failure.
+
+### Update Task
+
+```text
+PATCH /api/v1/tasks/{id}
+```
+
+Request body:
+
+```json
+{
+  "status": "done",
+  "priority": "medium"
+}
+```
+
+Request rules:
+
+- All fields are optional, but the body must include at least one client-owned field.
+- Only provided fields are changed.
+- Omitted fields keep their current values.
+- `title`, when provided, must not be empty.
+- `status`, when provided, must be one of the allowed status values.
+- `priority`, when provided, must be one of the allowed priority values.
+- `id`, `created_at`, and `updated_at` are ignored or rejected because they are server-owned.
+
+Success response:
+
+```text
+200 OK
+```
+
+```json
+{
+  "id": "task_01HYZ7Y6D8P6M4C7R9K2Q3F5A1",
+  "title": "Write API contract",
+  "description": "Define request and response shapes before implementing handlers.",
+  "status": "done",
+  "priority": "medium",
+  "due_date": "2026-07-01",
+  "created_at": "2026-06-15T10:30:00Z",
+  "updated_at": "2026-06-15T12:15:00Z"
+}
+```
+
+`PATCH` is used because the update operation is partial. Clients should be able to send only the fields they want to change without resending the full task representation. This reduces accidental overwrites and keeps update requests small.
+
+Possible status codes:
+
+- `200 OK`: task updated.
+- `400 Bad Request`: malformed JSON, invalid task ID format, or empty update body.
+- `404 Not Found`: task does not exist.
+- `422 Unprocessable Entity`: request JSON is valid but violates business rules.
+- `500 Internal Server Error`: unexpected server failure.
+
+### Delete Task
+
+```text
+DELETE /api/v1/tasks/{id}
+```
+
+Success response:
+
+```text
+204 No Content
+```
+
+The response body must be empty.
+
+Possible status codes:
+
+- `204 No Content`: task deleted.
+- `400 Bad Request`: invalid task ID format.
+- `404 Not Found`: task does not exist.
+- `500 Internal Server Error`: unexpected server failure.
+
+### Standard Error Format
+
+All error responses should use one stable JSON shape:
+
+```json
+{
+  "error": {
+    "code": "invalid_request",
+    "message": "Request body contains invalid fields.",
+    "details": {
+      "title": "title is required",
+      "status": "status must be one of: todo, in_progress, done"
+    }
+  }
+}
+```
+
+Error format rules:
+
+- `error.code` is a stable machine-readable string.
+- `error.message` is a human-readable summary.
+- `error.details` is optional and can hold field-specific validation messages.
+- Internal server details, SQL errors, stack traces, and implementation internals must not be returned to clients.
+
+Recommended error codes:
+
+- `invalid_json`
+- `invalid_request`
+- `validation_failed`
+- `not_found`
+- `internal_error`

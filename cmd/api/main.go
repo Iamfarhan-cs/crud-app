@@ -2,27 +2,15 @@ package main
 
 import (
 	"log"
-	"net/http"
-	"os"
 
-	apphttp "github.com/Iamfarhan-cs/crud-app/internal/http"
-	"github.com/Iamfarhan-cs/crud-app/internal/storage"
+	"github.com/Iamfarhan-cs/crud-app/internal/config"
 )
 
 func main() {
-	addr := ":" + envOrDefault("PORT", "8080")
-	store := storage.NewMemoryUserStore()
-	handler := apphttp.NewRouter(store)
+	cfg := config.Load()
 
-	log.Printf("server listening on %s", addr)
-	if err := http.ListenAndServe(addr, handler); err != nil {
-		log.Fatal(err)
-	}
-}
-
-func envOrDefault(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
+	// The API command is responsible for application wiring only.
+	// It should compose config, database, repositories, services, and handlers.
+	// Business rules, SQL queries, and HTTP request handling must not live here.
+	log.Printf("task management API scaffold loaded for %s", cfg.Environment)
 }
