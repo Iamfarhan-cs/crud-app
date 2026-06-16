@@ -4,7 +4,9 @@ import "net/http"
 
 // Handler owns HTTP concerns for task routes.
 // It should translate requests into service calls and service results into HTTP responses.
-// Business rules, persistence details, and database connection setup must not live here.
+// Handler-level security work includes request parsing, request size assumptions,
+// safe client error responses, and basic input shape validation.
+// Authentication, authorization, business rules, persistence details, and database connection setup must not live here.
 type Handler struct {
 	service *Service
 }

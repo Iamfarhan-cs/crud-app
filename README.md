@@ -570,3 +570,88 @@ Recommended error codes:
 - `validation_failed`
 - `not_found`
 - `internal_error`
+
+## Phase 7: Security Design
+
+This phase defines the security model for the Task Management CRUD API. It does not implement authentication, authorization, CRUD handler logic, or database SQL.
+
+### Authentication and Authorization
+
+Authentication answers: "who are you?"
+
+Authorization answers: "are you allowed to do this?"
+
+Authentication is planned later. V1 can define clean boundaries now without adding login, sessions, tokens, password handling, or identity provider integration.
+
+Task ownership is also planned later. A future version can add a `user_id` ownership field so authorization rules can decide which user is allowed to read, update, or delete a task. Until that is designed, handlers and services should not pretend ownership exists.
+
+### Validation Boundaries
+
+Input validation belongs partly in the handler and partly in the service.
+
+Handlers should validate HTTP-level concerns:
+
+- Request body format.
+- Required JSON structure.
+- Unsupported methods or paths.
+- Maximum request body size.
+- Conversion from request values into domain/service inputs.
+
+Services should validate business rules:
+
+- Required task title.
+- Allowed status values.
+- Allowed priority values.
+- Create and update lifecycle rules.
+- Server-owned fields such as `id`, `created_at`, and `updated_at`.
+
+Critical invariants should also be enforced by database constraints. Application validation gives clients useful errors, but database constraints protect data integrity if another code path, migration, script, or future service writes to the same tables.
+
+### SQL Safety
+
+Repository implementations must use parameterized SQL only.
+
+The code must never concatenate user input into SQL strings. Task IDs, titles, descriptions, status values, priority values, dates, pagination values, and future `user_id` values must be passed as query parameters.
+
+This keeps SQL construction separate from user-controlled data and reduces the risk of SQL injection when repository logic is implemented in a later phase.
+
+### Error Handling
+
+Client error responses should be safe and stable.
+
+API responses should use predictable error codes and clear messages without exposing stack traces, raw SQL errors, connection strings, table names, secret values, or internal implementation details.
+
+Detailed errors belong in logs, not API responses. Logs can include enough context for operators to debug failures, while client responses should remain limited to what the caller needs to fix the request or understand the outcome.
+
+### Secrets and Environment Files
+
+Secrets must come from environment variables or a managed secret provider.
+
+The repository must not commit real secrets, database passwords, API keys, private tokens, or production connection strings.
+
+Local `.env` files must be ignored by Git. A `.env.example` file may be committed if it contains only placeholder names and safe example values. It should document required variables without containing real credentials.
+
+### CORS
+
+CORS should be restrictive in production.
+
+The API should not default to allowing every origin in production. When browser clients are added, allowed origins should be configured explicitly for known frontend domains. Local development can be more flexible, but production should only allow trusted origins and required methods.
+
+### Request Body Size
+
+The request body size limit remains `1MB`.
+
+Task payloads are small, so accepting larger bodies is unnecessary. Keeping the `1MB` limit reduces memory pressure and gives the server a simple first line of defense against accidental or abusive oversized requests.
+
+### Phase 7 Non-Goals
+
+Phase 7 does not include:
+
+- Authentication implementation.
+- Authorization implementation.
+- User accounts.
+- Task ownership columns or `user_id` migrations.
+- CRUD handler implementation.
+- Database SQL implementation.
+- CORS middleware implementation.
+- Secret manager integration.
