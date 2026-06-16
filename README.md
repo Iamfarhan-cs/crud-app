@@ -570,3 +570,65 @@ Recommended error codes:
 - `validation_failed`
 - `not_found`
 - `internal_error`
+
+## Phase 6: Networking Design
+
+This phase defines how the Task Management CRUD API should behave as a network service. It does not implement CRUD endpoint logic or database repository logic.
+
+### Port Configuration
+
+Local development should default to port `8080`.
+
+The application should read `PORT` through the config package instead of hardcoding the port in `cmd/api/main.go`. This keeps startup behavior portable across local machines, containers, and production platforms that assign ports dynamically.
+
+In production, the Go process should usually run behind a load balancer or reverse proxy. The reverse proxy can own TLS termination, public routing, request buffering, and client-facing network policy while the Go service listens on its configured internal port.
+
+### HTTP Server
+
+The application should use an explicit `http.Server` instead of calling bare `http.ListenAndServe`.
+
+An explicit server makes network behavior visible and configurable:
+
+- `ReadTimeout` limits how long the server waits while reading the request.
+- `WriteTimeout` limits how long the server spends writing the response.
+- `IdleTimeout` limits how long keep-alive connections can sit unused.
+- `Shutdown` supports graceful termination instead of abruptly dropping in-flight requests.
+
+These settings help protect the service from slow or stuck clients and make production shutdown behavior predictable during deploys, restarts, and container termination.
+
+### Request Size Limit
+
+The API should apply a maximum request body size of `1MB`.
+
+Task create and update payloads are small, so larger bodies are unexpected. A body limit reduces memory pressure and helps reject accidental or abusive oversized requests before CRUD handlers are implemented.
+
+### Health Endpoints
+
+The first networking endpoint is:
+
+```text
+GET /healthz
+```
+
+`/healthz` should return a simple success response when the process is running and able to serve HTTP. It should not require database access because it is a lightweight process health check.
+
+`/readyz` is planned later.
+
+Readiness should check dependencies needed to serve real traffic. For this API, PostgreSQL is a network dependency, so a future `/readyz` endpoint can verify whether the database connection is available before the service receives production traffic.
+
+### Graceful Shutdown
+
+The API should listen for termination signals and call `http.Server.Shutdown` with a bounded timeout.
+
+Graceful shutdown gives active requests a short window to finish while the server stops accepting new requests. This matters behind load balancers and reverse proxies because deployment systems may terminate old processes while traffic is still draining.
+
+### Phase 6 Non-Goals
+
+Phase 6 does not include:
+
+- CRUD route implementation.
+- Request validation for task payloads.
+- Database repository implementation.
+- PostgreSQL readiness checks.
+- TLS setup inside the Go process.
+- Authentication, authorization, or rate limiting.
