@@ -570,3 +570,56 @@ Recommended error codes:
 - `validation_failed`
 - `not_found`
 - `internal_error`
+
+## Phase 8: Concurrency Design
+
+This phase defines how the Task Management CRUD API should think about concurrent requests. It does not implement full concurrency control, add database schema changes, or add CRUD handlers yet.
+
+Concurrency in a CRUD API means more than many requests arriving at the same time. It means the API must behave predictably when two clients read, create, update, or delete related data close together. The storage layer may serialize individual SQL statements, but the API still needs clear rules for request races, retries, stale reads, and soft-deleted records.
+
+### Lost Update Problem
+
+A lost update happens when two clients read the same task, both make changes, and the later write overwrites the earlier write without knowing it.
+
+Example:
+
+1. Client A reads task `123` with status `todo`.
+2. Client B reads task `123` with status `todo`.
+3. Client A updates the status to `in_progress`.
+4. Client B updates the priority using an older copy of the task and accidentally writes status `todo` again.
+
+The API should avoid update behavior that replaces fields the client did not intentionally change. `PATCH` must only update fields sent in the request body. Omitted fields must keep their existing values so partial updates do not erase concurrent changes by accident.
+
+As a planned future improvement, the API should use optimistic locking. The task table can later add a `version INTEGER` field that increments on every successful update. Clients would send the version they last saw, and repository update operations would only succeed when the stored version still matches. A stale update should return `409 Conflict` instead of silently overwriting newer data.
+
+### Duplicate Create Problem
+
+Duplicate creates can happen when a client sends `POST /api/v1/tasks`, times out before receiving the response, and retries the same request. The first request may have succeeded even though the client never saw the `201 Created` response. Without an idempotency strategy, the retry can create a second task with the same intent.
+
+As a planned future improvement, `POST /api/v1/tasks` should support an idempotency key. A client-provided idempotency key would let the API detect a retry of the same create request and return the original result instead of creating a duplicate task.
+
+This phase does not add idempotency storage or request handling. It only records the design expectation so future create logic has a clear direction.
+
+### Update-After-Delete Race
+
+An update-after-delete race happens when one request deletes a task while another request tries to update the same task.
+
+Example:
+
+1. Client A reads task `123`.
+2. Client B deletes task `123`.
+3. Client A sends a patch for task `123`.
+
+The update must not modify a soft-deleted row. Repository update and delete operations must include `deleted_at IS NULL` in their predicates so normal CRUD behavior only targets active tasks. If an update finds no active row, the service should treat that as a not-found result unless a future version check proves the client is stale and should receive `409 Conflict`.
+
+Delete operations should also target only active rows. Repeating a delete against an already deleted task should not update `deleted_at` again as though the task were still active.
+
+### Future Concurrency Rules
+
+- `PATCH` should only update fields that were explicitly sent by the client.
+- Repository update operations must include `deleted_at IS NULL`.
+- Repository delete operations must include `deleted_at IS NULL`.
+- Optimistic locking is planned for a later phase, using a future `version INTEGER` field.
+- Stale updates detected by version mismatch should return `409 Conflict`.
+- `POST` retries should eventually support an idempotency key to prevent duplicate creates.
+- This phase does not change the database schema; `version INTEGER` is future work.
