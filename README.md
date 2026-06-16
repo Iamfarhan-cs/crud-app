@@ -878,3 +878,119 @@ Delete operations should also target only active rows. Repeating a delete agains
 - Stale updates detected by version mismatch should return `409 Conflict`.
 - `POST` retries should eventually support an idempotency key to prevent duplicate creates.
 - This phase does not change the database schema; `version INTEGER` is future work.
+
+## Phase 9: Performance Design
+
+This phase defines the first performance expectations for the Task Management CRUD API. It does not implement caching, full CRUD handlers, advanced database optimization, or production observability tooling yet.
+
+Performance should be designed around the real request path:
+
+```text
+client -> network -> Go HTTP server -> handler -> service -> repository -> PostgreSQL -> repository -> service -> handler -> network -> client
+```
+
+Each step can add latency. Slow clients, large request bodies, JSON parsing, validation, connection pool waits, database query time, row scanning, response encoding, and network transfer all contribute to the final response time. The API should keep each layer simple, bounded, and measurable before adding advanced optimization.
+
+### List Endpoint Pagination
+
+List endpoints must be paginated.
+
+Returning every task in one response becomes slower and more expensive as the table grows. Large unbounded responses increase database work, memory usage, JSON encoding time, network transfer time, and client-side processing. Pagination keeps list responses predictable.
+
+V1 should use offset pagination:
+
+```text
+GET /api/v1/tasks?limit=20&offset=0
+```
+
+Pagination rules:
+
+- Default `limit` should be `20`.
+- Maximum `limit` should be `100`.
+- `offset` should default to `0`.
+- `limit` and `offset` must be non-negative integers.
+- Requests above the maximum limit should be rejected or clamped according to the API validation rules chosen in the handler phase.
+
+Offset pagination is simple and good enough for V1. Cursor pagination is a planned future improvement for large datasets or high-write workloads where deep offsets become expensive or unstable.
+
+### Active Task Listing Index
+
+The active task listing query needs an index because normal list operations should only return rows where `deleted_at IS NULL`, usually in a stable order such as newest tasks first.
+
+A query shaped like this should not scan the whole table as data grows:
+
+```sql
+SELECT id, title, description, status, created_at, updated_at, deleted_at
+FROM tasks
+WHERE deleted_at IS NULL
+ORDER BY created_at DESC
+LIMIT $1 OFFSET $2;
+```
+
+The Phase 4 partial index on active tasks supports this access pattern by indexing active rows in creation order. That keeps common list reads focused on the rows the API actually returns.
+
+### Query Shape
+
+Repository queries should avoid `SELECT *`.
+
+Explicit column lists make the API more predictable:
+
+- They avoid returning unused columns.
+- They protect repository scanning code from accidental table changes.
+- They make query cost easier to understand.
+- They document exactly which fields the repository needs.
+
+Future repository implementations should select only the columns required for the operation. List queries may eventually use a lighter projection than detail queries if the API response shape needs it.
+
+### Database Connection Pooling
+
+The API should use PostgreSQL connection pooling through the Go database driver or pool library instead of opening a new database connection per request.
+
+Connection pool settings should be explicit:
+
+- `max open connections`: caps total concurrent database connections.
+- `max idle connections`: keeps a bounded number of warm reusable connections.
+- `connection max lifetime`: periodically retires old connections so long-running processes do not hold stale connections forever.
+
+These values should be tuned for the deployment environment and PostgreSQL capacity. Setting them too high can overload the database. Setting them too low can make requests wait for a free connection even when PostgreSQL has capacity.
+
+### Query Timeouts
+
+Repository methods should accept `context.Context`.
+
+The context allows handlers or services to attach deadlines, cancellation, and request-scoped values before calling the repository. Query timeouts prevent slow database work from running forever after a client disconnects or after the API has already exceeded its response budget.
+
+Future SQL calls should use context-aware driver methods, such as `QueryContext`, `QueryRowContext`, or equivalent methods from the chosen PostgreSQL library.
+
+### Observability
+
+The API should log slow queries.
+
+Slow query logs help identify missing indexes, inefficient query shapes, pool starvation, and data growth problems before they become outages. Logs should include operation names and durations, but should not expose sensitive request data.
+
+The API should also monitor latency percentiles:
+
+- `p95` latency shows the experience of slower-but-common requests.
+- `p99` latency shows tail behavior and helps reveal rare but painful slow paths.
+
+Averages are not enough because a small number of very slow requests can hurt users while the average still looks acceptable.
+
+### Realistic Test Data
+
+Performance checks should use realistic test data.
+
+Testing with five tasks does not reveal list latency, index behavior, pagination cost, or slow query patterns. Future performance validation should seed enough rows to approximate real usage, including active tasks, soft-deleted tasks, mixed statuses, mixed priorities, and varied creation dates.
+
+Realistic test data makes query plans, pagination behavior, and API response sizes closer to production conditions.
+
+### Phase 9 Non-Goals
+
+Phase 9 does not include:
+
+- Caching.
+- Full CRUD handler implementation.
+- Advanced query optimization.
+- Cursor pagination implementation.
+- Production dashboards.
+- Load testing automation.
+- Database schema changes.
