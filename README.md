@@ -570,3 +570,66 @@ Recommended error codes:
 - `validation_failed`
 - `not_found`
 - `internal_error`
+
+## Phase 5: Storage Design
+
+This phase defines the storage behavior for the Task Management CRUD API before implementing repository SQL. The goal is to make task lifecycle rules clear at the persistence boundary so later repository code can follow one predictable contract.
+
+### Soft Delete Model
+
+Tasks use soft delete.
+
+The task table should include a nullable `deleted_at` timestamp:
+
+- `deleted_at IS NULL` means the task is active.
+- `deleted_at IS NOT NULL` means the task has been deleted.
+
+Delete operations must not physically remove task rows. A delete should set `deleted_at` to the time of deletion. This preserves historical data for future operational needs while keeping normal API behavior simple.
+
+### Active Task Rules
+
+Normal reads only return active tasks.
+
+Repository reads should treat active tasks as the default view of the system:
+
+- Listing tasks returns only rows where `deleted_at IS NULL`.
+- Finding a task by ID returns only the matching row where `deleted_at IS NULL`.
+- Deleted tasks behave like missing tasks for normal read paths.
+
+The word `Active` appears in repository read method names so future implementations do not accidentally include soft-deleted rows in ordinary API responses.
+
+### Update Rules
+
+Deleted tasks cannot be updated.
+
+Updates should only target active tasks. If a task has a non-null `deleted_at`, update behavior should be the same as trying to update a task that does not exist. This keeps the lifecycle simple: once deleted, a task is outside normal CRUD behavior.
+
+The word `Active` appears in repository update method names so callers and implementations share the same expectation: update operations only apply to records where `deleted_at IS NULL`.
+
+### Delete Rules
+
+Deleting a task should set `deleted_at` instead of removing the row.
+
+The repository method should be named `SoftDelete` to make the behavior explicit at the interface boundary. Later SQL can enforce this by updating the row and setting the deletion timestamp only for active tasks.
+
+### V1 Non-Goals
+
+Storage V1 does not include:
+
+- Restore behavior for deleted tasks.
+- Purge jobs or retention policies for old deleted tasks.
+- Audit logging for create, update, or delete events.
+
+Audit logging may be added later if the API needs a separate history of who changed what and when. That should be designed as its own storage concern instead of being mixed into the basic CRUD repository skeleton.
+
+### Repository Interface Shape
+
+The task repository should expose lifecycle-aware method names:
+
+- `Create`
+- `FindActiveByID`
+- `ListActive`
+- `UpdateActive`
+- `SoftDelete`
+
+These names keep storage rules visible without adding SQL details early. Full repository implementation, SQL queries, HTTP handlers, restore behavior, purge behavior, and audit logging are deferred.
