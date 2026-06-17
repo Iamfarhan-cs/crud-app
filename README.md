@@ -878,3 +878,75 @@ Delete operations should also target only active rows. Repeating a delete agains
 - Stale updates detected by version mismatch should return `409 Conflict`.
 - `POST` retries should eventually support an idempotency key to prevent duplicate creates.
 - This phase does not change the database schema; `version INTEGER` is future work.
+
+## Build Phase A: Domain Model
+
+Build Phase A defines the task domain model and the API-facing request and response shapes in `internal/task/model.go`.
+
+The task lifecycle now uses a focused `Status` string type:
+
+- `pending`
+- `in_progress`
+- `done`
+
+The `Task` domain model represents the application's internal view of a task:
+
+- `ID`
+- `Title`
+- `Description`
+- `Status`
+- `CreatedAt`
+- `UpdatedAt`
+- `DeletedAt`
+
+`DeletedAt` is included in the domain model because soft-delete state is part of the internal lifecycle. It is intentionally not exposed in API responses.
+
+### Request Models
+
+`CreateTaskRequest` contains only client-owned create fields:
+
+- `title`
+- `description`
+- `status`
+
+`UpdateTaskRequest` contains optional pointers for partial updates:
+
+- `title`
+- `description`
+- `status`
+
+Server-owned fields such as `id`, `created_at`, `updated_at`, and `deleted_at` are not accepted in create or update requests. This keeps ownership clear: clients describe the task content, while the server owns identifiers, timestamps, and deletion state.
+
+### Response Model
+
+`TaskResponse` defines the public task representation returned by the API:
+
+- `id`
+- `title`
+- `description`
+- `status`
+- `created_at`
+- `updated_at`
+
+`deleted_at` is not exposed because deleted tasks should be handled as lifecycle state inside the system, not as part of the normal public task response.
+
+### Model Separation
+
+The domain model, request models, and response model are intentionally separate:
+
+- The domain model can hold internal lifecycle fields.
+- Request models restrict what clients are allowed to send.
+- Response models restrict what the API exposes back to clients.
+
+This separation prevents accidental exposure of server-owned fields and gives later validation, service, handler, and repository phases clear boundaries to build on.
+
+### Build Phase A Non-Goals
+
+Build Phase A does not include:
+
+- Request validation.
+- HTTP handlers.
+- Route registration.
+- Repository implementation.
+- SQL query logic.
+- Service behavior changes.
