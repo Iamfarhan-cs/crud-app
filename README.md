@@ -879,293 +879,6 @@ Delete operations should also target only active rows. Repeating a delete agains
 - `POST` retries should eventually support an idempotency key to prevent duplicate creates.
 - This phase does not change the database schema; `version INTEGER` is future work.
 
-## Build Phase D: PostgreSQL Repository Implementation
-
-Build Phase D adds the PostgreSQL-backed task repository in `internal/task/postgres_repository.go`.
-
-The repository implements the task `Repository` interface using `database/sql` and keeps SQL behavior inside the persistence layer. Services continue to depend on the interface instead of depending directly on PostgreSQL.
-
-### Repository Construction
-
-The PostgreSQL repository is represented by:
-
-- `PostgresRepository`
-- `NewPostgresRepository(db *sql.DB) *PostgresRepository`
-
-The repository stores a shared `*sql.DB` handle and uses context-aware database calls for every operation.
-
-### Implemented Methods
-
-The PostgreSQL repository implements:
-
-- `Create`
-- `FindActiveByID`
-- `ListActive`
-- `UpdateActive`
-- `SoftDelete`
-
-`Create` inserts task fields and uses `RETURNING` to read back the stored row.
-
-`FindActiveByID` selects a task by ID only when `deleted_at IS NULL`.
-
-`ListActive` selects active tasks ordered by `created_at DESC` and uses `LIMIT` and `OFFSET` placeholders for bounded list reads.
-
-`UpdateActive` updates task fields only when the row is active and uses `RETURNING` to read back the updated row.
-
-`SoftDelete` updates `deleted_at` and `updated_at` with `NOW()` instead of physically deleting the row.
-
-### SQL Safety and Lifecycle Rules
-
-All SQL uses positional parameters. No user input is concatenated into SQL strings.
-
-The repository avoids `SELECT *` and explicitly selects task columns:
-## Build Phase C: Service Layer Implementation
-
-Build Phase C implements the task service in `internal/task/service.go`.
-
-The service layer now owns task business rules and use-case orchestration while continuing to depend on the `Repository` interface instead of PostgreSQL directly.
-
-### Service Methods
-
-The task service exposes these use-case methods:
-
-- `CreateTask(ctx context.Context, req CreateTaskRequest) (TaskResponse, error)`
-- `GetTask(ctx context.Context, id string) (TaskResponse, error)`
-- `ListTasks(ctx context.Context, page int, limit int) ([]TaskResponse, error)`
-- `UpdateTask(ctx context.Context, id string, req UpdateTaskRequest) (TaskResponse, error)`
-- `DeleteTask(ctx context.Context, id string) error`
-
-### Create Behavior
-
-Create behavior now includes service-level defaults and server-owned fields:
-
-- Titles are trimmed and must not be empty.
-- Missing status defaults to `pending`.
-- Provided status must be `pending`, `in_progress`, or `done`.
-- IDs are generated with `uuid.NewString()`.
-- `CreatedAt` and `UpdatedAt` are set with `time.Now().UTC()`.
-
-### Update Behavior
-
-Update behavior follows PATCH semantics:
-
-- A request must include at least one update field.
-- A nil field means the client did not provide that field.
-- Provided titles are trimmed and must not be empty.
-- Provided status values must be valid.
-- The service loads the existing active task before applying changes.
-- `UpdatedAt` is refreshed with `time.Now().UTC()`.
-
-### Read, List, and Delete Behavior
-
-The service trims task IDs before read and delete operations. An empty ID returns `ErrTaskNotFound`.
-
-List behavior normalizes pagination:
-
-- Page `0` defaults to `1`.
-- Limit `0` defaults to `20`.
-- Page must be at least `1`.
-- Limit must be between `1` and `100`.
-- Invalid pagination returns `ErrInvalidPagination`.
-
-Delete behavior calls `SoftDelete`, keeping the soft-delete policy at the repository boundary.
-
-### Service Helpers
-
-The service also includes small helper functions:
-
-- `validateTitle`
-- `validateStatus`
-- `normalizePagination`
-- `toResponse`
-
-These keep validation, pagination normalization, and response mapping focused inside the service layer.
-
-### Supporting Contract Alignment
-
-Because this branch was created from `main`, Build Phase C also aligns the task contracts that the service depends on:
-
-- `Task` now includes `Description *string` and `DeletedAt *time.Time`.
-- `Status` now uses `pending`, `in_progress`, and `done`.
-- Create, update, and response DTOs match the service-owned task fields.
-- Repository list operations accept `limit` and `offset`.
-- Task sentinel errors include validation, pagination, not-found, and empty-update cases.
-
-### Build Phase C Non-Goals
-
-Build Phase C does not include:
-
-- PostgreSQL repository implementation.
-- SQL queries.
-- HTTP handlers.
-- Route registration.
-- Authentication or authorization.
-## Build Phase B: Errors and Repository Contract
-
-Build Phase B defines the task error vocabulary in `internal/task/errors.go` and the persistence boundary in `internal/task/repository.go`.
-
-### Sentinel Errors
-
-The task package now exposes sentinel errors for stable failure cases:
-
-- `ErrTaskNotFound`
-- `ErrInvalidTitle`
-- `ErrInvalidStatus`
-- `ErrInvalidPagination`
-- `ErrNoFieldsToUpdate`
-
-These errors give upper layers stable values that can later be mapped to HTTP responses. Handlers can translate them into response codes and bodies without tying service or repository code to HTTP behavior.
-
-Wrapped errors must preserve `errors.Is` compatibility. This lets future service or repository implementations add context to an error while still allowing callers to detect the original task failure category.
-
-The repository is an interface, not a PostgreSQL implementation. This keeps the service layer dependent on a stable task storage contract instead of depending directly on PostgreSQL, SQL queries, connection details, or any specific database package.
-
-### Repository Methods
-
-The task repository contract now exposes these methods:
-
-- `Create(ctx context.Context, task Task) (Task, error)`
-- `FindActiveByID(ctx context.Context, id string) (Task, error)`
-- `ListActive(ctx context.Context, limit int, offset int) ([]Task, error)`
-- `UpdateActive(ctx context.Context, task Task) (Task, error)`
-- `SoftDelete(ctx context.Context, id string) error`
-
-`ListActive` accepts `limit` and `offset` so future list queries can stay bounded and support pagination without changing the repository shape later.
-
-### Active Task Meaning
-
-`Active` means `deleted_at IS NULL`.
-
-This makes the soft-delete lifecycle visible in the method names:
-
-- Active reads ignore soft-deleted tasks.
-- Active lists return only non-deleted tasks.
-- Active updates cannot modify deleted tasks.
-- Soft delete marks a task as deleted instead of physically removing the row.
-
-### Repository Boundary Rules
-
-Repository implementations must use parameterized SQL and must never concatenate user input into query strings.
-
-The repository must not contain HTTP concerns such as:
-
-- Status codes.
-- Request parsing.
-- Response formatting.
-- Route behavior.
-
-The repository also must not make business-policy decisions. Those belong in the service layer, which can decide how to interpret repository results and which domain rules apply to create, update, read, and delete workflows.
-
-### Build Phase B Non-Goals
-
-Build Phase B does not include:
-
-- PostgreSQL query implementation.
-- Service logic.
-- HTTP handlers.
-- Route registration.
-- Request validation.
-- Business-rule enforcement.
-- HTTP error mapping implementation.
-## Build Phase A: Domain Model
-
-Build Phase A defines the task domain model and the API-facing request and response shapes in `internal/task/model.go`.
-
-The task lifecycle now uses a focused `Status` string type:
-
-- `pending`
-- `in_progress`
-- `done`
-
-The `Task` domain model represents the application's internal view of a task:
-
-- `ID`
-- `Title`
-- `Description`
-- `Status`
-- `CreatedAt`
-- `UpdatedAt`
-- `DeletedAt`
-
-`DeletedAt` is included in the domain model because soft-delete state is part of the internal lifecycle. It is intentionally not exposed in API responses.
-
-### Request Models
-
-`CreateTaskRequest` contains only client-owned create fields:
-
-- `title`
-- `description`
-- `status`
-
-`UpdateTaskRequest` contains optional pointers for partial updates:
-
-- `title`
-- `description`
-- `status`
-
-Server-owned fields such as `id`, `created_at`, `updated_at`, and `deleted_at` are not accepted in create or update requests. This keeps ownership clear: clients describe the task content, while the server owns identifiers, timestamps, and deletion state.
-
-### Response Model
-
-`TaskResponse` defines the public task representation returned by the API:
-
-- `id`
-- `title`
-- `description`
-- `status`
-- `created_at`
-- `updated_at`
-- `deleted_at`
-
-Normal reads exclude soft-deleted rows with `deleted_at IS NULL`.
-
-Updates also require `deleted_at IS NULL`, so soft-deleted tasks cannot be modified by normal update operations.
-
-Missing active records return `ErrTaskNotFound`. Unexpected database failures are wrapped with contextual messages using `fmt.Errorf` so callers can preserve the original error while still getting useful operational context.
-
-### Supporting Contract Alignment
-
-Because this branch was created from `main`, Build Phase D also aligns the task contracts needed by the PostgreSQL repository:
-
-- `Task` includes nullable `Description` and `DeletedAt` fields.
-- `Status` uses the database-supported values `pending`, `in_progress`, and `done`.
-- Create, update, and response DTOs match the current task table fields.
-- `Repository.ListActive` accepts `limit` and `offset`.
-- Task sentinel errors include not-found, validation, pagination, and empty-update cases.
-
-### Build Phase D Non-Goals
-
-Build Phase D does not include:
-
-- HTTP handlers.
-- Route registration.
-- Application wiring.
-- Database connection startup changes.
-- Service behavior changes.
-- PostgreSQL migrations beyond the existing task table migration.
-
-`deleted_at` is not exposed because deleted tasks should be handled as lifecycle state inside the system, not as part of the normal public task response.
-
-### Model Separation
-
-The domain model, request models, and response model are intentionally separate:
-
-- The domain model can hold internal lifecycle fields.
-- Request models restrict what clients are allowed to send.
-- Response models restrict what the API exposes back to clients.
-
-This separation prevents accidental exposure of server-owned fields and gives later validation, service, handler, and repository phases clear boundaries to build on.
-
-### Build Phase A Non-Goals
-
-Build Phase A does not include:
-
-- Request validation.
-- HTTP handlers.
-- Route registration.
-- Repository implementation.
-- SQL query logic.
-- Service behavior changes.
 ## Phase 9: Performance Design
 
 This phase defines the first performance expectations for the Task Management CRUD API. It does not implement caching, full CRUD handlers, advanced database optimization, or production observability tooling yet.
@@ -1281,3 +994,281 @@ Phase 9 does not include:
 - Production dashboards.
 - Load testing automation.
 - Database schema changes.
+
+## Build Phase A: Domain Model
+
+Build Phase A defines the task domain model and the API-facing request and response shapes in `internal/task/model.go`.
+
+The task lifecycle now uses a focused `Status` string type:
+
+- `pending`
+- `in_progress`
+- `done`
+
+The `Task` domain model represents the application's internal view of a task:
+
+- `ID`
+- `Title`
+- `Description`
+- `Status`
+- `CreatedAt`
+- `UpdatedAt`
+- `DeletedAt`
+
+`DeletedAt` is included in the domain model because soft-delete state is part of the internal lifecycle. It is intentionally not exposed in API responses.
+
+### Request Models
+
+`CreateTaskRequest` contains only client-owned create fields:
+
+- `title`
+- `description`
+- `status`
+
+`UpdateTaskRequest` contains optional pointers for partial updates:
+
+- `title`
+- `description`
+- `status`
+
+Server-owned fields such as `id`, `created_at`, `updated_at`, and `deleted_at` are not accepted in create or update requests. This keeps ownership clear: clients describe the task content, while the server owns identifiers, timestamps, and deletion state.
+
+### Response Model
+
+`TaskResponse` defines the public task representation returned by the API:
+
+- `id`
+- `title`
+- `description`
+- `status`
+- `created_at`
+- `updated_at`
+
+`deleted_at` is not exposed because deleted tasks should be handled as lifecycle state inside the system, not as part of the normal public task response.
+
+### Model Separation
+
+The domain model, request models, and response model are intentionally separate:
+
+- The domain model can hold internal lifecycle fields.
+- Request models restrict what clients are allowed to send.
+- Response models restrict what the API exposes back to clients.
+
+This separation prevents accidental exposure of server-owned fields and gives later validation, service, handler, and repository phases clear boundaries to build on.
+
+### Build Phase A Non-Goals
+
+Build Phase A does not include:
+
+- Request validation.
+- HTTP handlers.
+- Route registration.
+- Repository implementation.
+- SQL query logic.
+- Service behavior changes.
+
+## Build Phase B: Errors and Repository Contract
+
+Build Phase B defines the task error vocabulary in `internal/task/errors.go` and the persistence boundary in `internal/task/repository.go`.
+
+### Sentinel Errors
+
+The task package now exposes sentinel errors for stable failure cases:
+
+- `ErrTaskNotFound`
+- `ErrInvalidTitle`
+- `ErrInvalidStatus`
+- `ErrInvalidPagination`
+- `ErrNoFieldsToUpdate`
+
+These errors give upper layers stable values that can later be mapped to HTTP responses. Handlers can translate them into response codes and bodies without tying service or repository code to HTTP behavior.
+
+Wrapped errors must preserve `errors.Is` compatibility. This lets future service or repository implementations add context to an error while still allowing callers to detect the original task failure category.
+
+The repository is an interface, not a PostgreSQL implementation. This keeps the service layer dependent on a stable task storage contract instead of depending directly on PostgreSQL, SQL queries, connection details, or any specific database package.
+
+### Repository Methods
+
+The task repository contract now exposes these methods:
+
+- `Create(ctx context.Context, task Task) (Task, error)`
+- `FindActiveByID(ctx context.Context, id string) (Task, error)`
+- `ListActive(ctx context.Context, limit int, offset int) ([]Task, error)`
+- `UpdateActive(ctx context.Context, task Task) (Task, error)`
+- `SoftDelete(ctx context.Context, id string) error`
+
+`ListActive` accepts `limit` and `offset` so future list queries can stay bounded and support pagination without changing the repository shape later.
+
+### Active Task Meaning
+
+`Active` means `deleted_at IS NULL`.
+
+This makes the soft-delete lifecycle visible in the method names:
+
+- Active reads ignore soft-deleted tasks.
+- Active lists return only non-deleted tasks.
+- Active updates cannot modify deleted tasks.
+- Soft delete marks a task as deleted instead of physically removing the row.
+
+### Repository Boundary Rules
+
+Repository implementations must use parameterized SQL and must never concatenate user input into query strings.
+
+The repository must not contain HTTP concerns such as:
+
+- Status codes.
+- Request parsing.
+- Response formatting.
+- Route behavior.
+
+The repository also must not make business-policy decisions. Those belong in the service layer, which can decide how to interpret repository results and which domain rules apply to create, update, read, and delete workflows.
+
+### Build Phase B Non-Goals
+
+Build Phase B does not include:
+
+- PostgreSQL query implementation.
+- Service logic.
+- HTTP handlers.
+- Route registration.
+- Request validation.
+- Business-rule enforcement.
+- HTTP error mapping implementation.
+
+## Build Phase C: Service Layer Implementation
+
+Build Phase C implements the task service in `internal/task/service.go`.
+
+The service layer now owns task business rules and use-case orchestration while continuing to depend on the `Repository` interface instead of PostgreSQL directly.
+
+### Service Methods
+
+The task service exposes these use-case methods:
+
+- `CreateTask(ctx context.Context, req CreateTaskRequest) (TaskResponse, error)`
+- `GetTask(ctx context.Context, id string) (TaskResponse, error)`
+- `ListTasks(ctx context.Context, page int, limit int) ([]TaskResponse, error)`
+- `UpdateTask(ctx context.Context, id string, req UpdateTaskRequest) (TaskResponse, error)`
+- `DeleteTask(ctx context.Context, id string) error`
+
+### Create Behavior
+
+Create behavior now includes service-level defaults and server-owned fields:
+
+- Titles are trimmed and must not be empty.
+- Missing status defaults to `pending`.
+- Provided status must be `pending`, `in_progress`, or `done`.
+- IDs are generated with `uuid.NewString()`.
+- `CreatedAt` and `UpdatedAt` are set with `time.Now().UTC()`.
+
+### Update Behavior
+
+Update behavior follows PATCH semantics:
+
+- A request must include at least one update field.
+- A nil field means the client did not provide that field.
+- Provided titles are trimmed and must not be empty.
+- Provided status values must be valid.
+- The service loads the existing active task before applying changes.
+- `UpdatedAt` is refreshed with `time.Now().UTC()`.
+
+### Read, List, and Delete Behavior
+
+The service trims task IDs before read and delete operations. An empty ID returns `ErrTaskNotFound`.
+
+List behavior normalizes pagination:
+
+- Page `0` defaults to `1`.
+- Limit `0` defaults to `20`.
+- Page must be at least `1`.
+- Limit must be between `1` and `100`.
+- Invalid pagination returns `ErrInvalidPagination`.
+
+Delete behavior calls `SoftDelete`, keeping the soft-delete policy at the repository boundary.
+
+### Service Helpers
+
+The service also includes small helper functions:
+
+- `validateTitle`
+- `validateStatus`
+- `normalizePagination`
+- `toResponse`
+
+These keep validation, pagination normalization, and response mapping focused inside the service layer.
+
+### Build Phase C Non-Goals
+
+Build Phase C does not include:
+
+- PostgreSQL repository implementation.
+- SQL queries.
+- HTTP handlers.
+- Route registration.
+- Authentication or authorization.
+
+## Build Phase D: PostgreSQL Repository Implementation
+
+Build Phase D adds the PostgreSQL-backed task repository in `internal/task/postgres_repository.go`.
+
+The repository implements the task `Repository` interface using `database/sql` and keeps SQL behavior inside the persistence layer. Services continue to depend on the interface instead of depending directly on PostgreSQL.
+
+### Repository Construction
+
+The PostgreSQL repository is represented by:
+
+- `PostgresRepository`
+- `NewPostgresRepository(db *sql.DB) *PostgresRepository`
+
+The repository stores a shared `*sql.DB` handle and uses context-aware database calls for every operation.
+
+### Implemented Methods
+
+The PostgreSQL repository implements:
+
+- `Create`
+- `FindActiveByID`
+- `ListActive`
+- `UpdateActive`
+- `SoftDelete`
+
+`Create` inserts task fields and uses `RETURNING` to read back the stored row.
+
+`FindActiveByID` selects a task by ID only when `deleted_at IS NULL`.
+
+`ListActive` selects active tasks ordered by `created_at DESC` and uses `LIMIT` and `OFFSET` placeholders for bounded list reads.
+
+`UpdateActive` updates task fields only when the row is active and uses `RETURNING` to read back the updated row.
+
+`SoftDelete` updates `deleted_at` and `updated_at` with `NOW()` instead of physically deleting the row.
+
+### SQL Safety and Lifecycle Rules
+
+All SQL uses positional parameters. No user input is concatenated into SQL strings.
+
+The repository avoids `SELECT *` and explicitly selects task columns:
+
+- `id`
+- `title`
+- `description`
+- `status`
+- `created_at`
+- `updated_at`
+- `deleted_at`
+
+Normal reads exclude soft-deleted rows with `deleted_at IS NULL`.
+
+Updates also require `deleted_at IS NULL`, so soft-deleted tasks cannot be modified by normal update operations.
+
+Missing active records return `ErrTaskNotFound`. Unexpected database failures are wrapped with contextual messages using `fmt.Errorf` so callers can preserve the original error while still getting useful operational context.
+
+### Build Phase D Non-Goals
+
+Build Phase D does not include:
+
+- HTTP handlers.
+- Route registration.
+- Application wiring.
+- Database connection startup changes.
+- Service behavior changes.
+- PostgreSQL migrations beyond the existing task table migration.
