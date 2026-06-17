@@ -879,9 +879,23 @@ Delete operations should also target only active rows. Repeating a delete agains
 - `POST` retries should eventually support an idempotency key to prevent duplicate creates.
 - This phase does not change the database schema; `version INTEGER` is future work.
 
-## Build Phase B: Repository Contract
+## Build Phase B: Errors and Repository Contract
 
-Build Phase B defines the task persistence boundary in `internal/task/repository.go`.
+Build Phase B defines the task error vocabulary in `internal/task/errors.go` and the persistence boundary in `internal/task/repository.go`.
+
+### Sentinel Errors
+
+The task package now exposes sentinel errors for stable failure cases:
+
+- `ErrTaskNotFound`
+- `ErrInvalidTitle`
+- `ErrInvalidStatus`
+- `ErrInvalidPagination`
+- `ErrNoFieldsToUpdate`
+
+These errors give upper layers stable values that can later be mapped to HTTP responses. Handlers can translate them into response codes and bodies without tying service or repository code to HTTP behavior.
+
+Wrapped errors must preserve `errors.Is` compatibility. This lets future service or repository implementations add context to an error while still allowing callers to detect the original task failure category.
 
 The repository is an interface, not a PostgreSQL implementation. This keeps the service layer dependent on a stable task storage contract instead of depending directly on PostgreSQL, SQL queries, connection details, or any specific database package.
 
@@ -931,3 +945,4 @@ Build Phase B does not include:
 - Route registration.
 - Request validation.
 - Business-rule enforcement.
+- HTTP error mapping implementation.
