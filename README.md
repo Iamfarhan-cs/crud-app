@@ -1349,3 +1349,85 @@ Build Phase F does not include:
 - Authentication or authorization.
 - Production deployment manifests.
 - Background workers.
+## Build Phase E: HTTP Handlers Implementation
+
+Build Phase E implements the task HTTP handler layer in `internal/task/handler.go`.
+
+The handler layer owns HTTP routing, request decoding, query parsing, response encoding, and error-to-response mapping. It calls service methods only and does not contain business rules, SQL, PostgreSQL access, or application wiring.
+
+### Routes
+
+The handler registers task routes under `/api/v1/tasks`:
+
+- `POST /api/v1/tasks`
+- `GET /api/v1/tasks`
+- `GET /api/v1/tasks/{id}`
+- `PATCH /api/v1/tasks/{id}`
+- `DELETE /api/v1/tasks/{id}`
+
+Collection requests are routed through `tasksCollection`, and single-task requests are routed through `taskResource`.
+
+### Handler Methods
+
+Build Phase E adds these handler methods:
+
+- `CreateTask`
+- `ListTasks`
+- `GetTask`
+- `UpdateTask`
+- `DeleteTask`
+
+Create and update requests decode JSON bodies into task request DTOs. Request bodies are limited to `1MB` with `http.MaxBytesReader` before JSON decoding.
+
+List requests parse optional `page` and `limit` query parameters. The handler only checks whether supplied values are integers; the service remains responsible for default values and max-limit rules.
+
+Resource requests extract the task ID from the path. Missing or malformed IDs return the same not-found response shape as a missing task.
+
+### Response Behavior
+
+Successful responses use the expected HTTP status codes:
+
+- Create returns `201 Created`.
+- List returns `200 OK`.
+- Get returns `200 OK`.
+- Update returns `200 OK`.
+- Delete returns `204 No Content`.
+
+All JSON responses set `Content-Type: application/json`.
+
+Error responses use the standard shape:
+
+```json
+{
+  "error": {
+    "code": "...",
+    "message": "..."
+  }
+}
+```
+
+### Error Mapping
+
+The handler maps service/domain errors to stable client responses:
+
+- `ErrTaskNotFound` maps to `404 TASK_NOT_FOUND`.
+- `ErrInvalidTitle` maps to `400 INVALID_TITLE`.
+- `ErrInvalidStatus` maps to `400 INVALID_STATUS`.
+- `ErrInvalidPagination` maps to `400 INVALID_PAGINATION`.
+- `ErrNoFieldsToUpdate` maps to `400 NO_FIELDS_TO_UPDATE`.
+- Unknown errors map to `500 INTERNAL_ERROR`.
+
+Invalid JSON returns `400 INVALID_JSON`.
+
+Unsupported HTTP methods return `405 METHOD_NOT_ALLOWED`.
+
+### Build Phase E Non-Goals
+
+Build Phase E does not include:
+
+- `main.go` wiring.
+- Database connection wiring.
+- PostgreSQL repository construction.
+- Middleware.
+- Authentication or authorization.
+- Tests.
