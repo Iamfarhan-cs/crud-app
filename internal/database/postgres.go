@@ -1,19 +1,35 @@
 package database
 
-// PostgresConfig contains the values needed to configure a PostgreSQL connection.
-// This file should own database connection setup concerns.
-// Task business rules, HTTP routing, and environment parsing must not live here.
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+	_ "github.com/lib/pq"
+)
+
 type PostgresConfig struct {
-	DSN string
+	DatabaseURL           string
+	MaxOpenConnections    int
+	MaxIdleConnections    int
+	ConnectionMaxLifetime time.Duration
 }
 
-// Postgres is a placeholder for the future PostgreSQL connection wrapper.
-// A real database connection will be introduced in a later phase.
-type Postgres struct {
-	DSN string
-}
+func OpenPostgres(ctx context.Context, cfg PostgresConfig) (*sql.DB, error) {
+	db, err := sql.Open("postgres", cfg.DatabaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("open postgres: %w", err)
+	}
 
-// NewPostgres records the intended database configuration without opening a connection yet.
-func NewPostgres(cfg PostgresConfig) *Postgres {
-	return &Postgres{DSN: cfg.DSN}
+	db.SetMaxOpenConns(cfg.MaxOpenConnections)
+	db.SetMaxIdleConns(cfg.MaxIdleConnections)
+	db.SetConnMaxLifetime(cfg.ConnectionMaxLifetime)
+
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("ping postgres: %w", err)
+	}
+
+	return db, nil
 }

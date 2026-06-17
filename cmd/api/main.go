@@ -5,59 +5,73 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/Iamfarhan-cs/crud-app/internal/config"
-)
-
-const (
-	maxRequestBodyBytes = 1 << 20
-	readTimeout         = 5 * time.Second
-	writeTimeout        = 10 * time.Second
-	idleTimeout         = 60 * time.Second
-	shutdownTimeout     = 10 * time.Second
+	"github.com/Iamfarhan-cs/crud-app/internal/database"
+	"github.com/Iamfarhan-cs/crud-app/internal/task"
 )
 
 func main() {
-	cfg := config.Load()
-
-	// The API command is responsible for application wiring only.
-	// It should compose config, database, repositories, services, and handlers.
-	// Business rules, SQL queries, and HTTP request handling must not live here.
-	router := http.NewServeMux()
-	router.HandleFunc("/healthz", healthzHandler)
-
-	server := &http.Server{
-		Addr:         ":" + cfg.HTTPPort,
-		Handler:      http.MaxBytesHandler(router, maxRequestBodyBytes),
-		ReadTimeout:  readTimeout,
-		WriteTimeout: writeTimeout,
-		IdleTimeout:  idleTimeout,
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("load config: %v", err)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelStartup()
+
+	db, err := database.OpenPostgres(startupCtx, database.PostgresConfig{
+		DatabaseURL:           cfg.DatabaseURL,
+		MaxOpenConnections:    cfg.DBMaxOpenConnections,
+		MaxIdleConnections:    cfg.DBMaxIdleConnections,
+		ConnectionMaxLifetime: cfg.DBConnectionMaxLife,
+	})
+	if err != nil {
+		log.Fatalf("open postgres: %v", err)
+	}
+	defer db.Close()
+
+	taskRepository := task.NewPostgresRepository(db)
+	taskService := task.NewService(taskRepository)
+	taskHandler := task.NewHandler(taskService)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", healthzHandler)
+	taskHandler.RegisterRoutes(mux)
+
+	server := &http.Server{
+		Addr:         ":" + cfg.Port,
+		Handler:      mux,
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout,
+		IdleTimeout:  cfg.IdleTimeout,
+	}
 
 	go func() {
-		log.Printf("task management API listening on port %s in %s", cfg.HTTPPort, cfg.Environment)
+		log.Printf("server starting on port %s", cfg.Port)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("server failed: %v", err)
 		}
 	}()
 
-	<-ctx.Done()
-	stop()
+	shutdownSignal := make(chan os.Signal, 1)
+	signal.Notify(shutdownSignal, os.Interrupt, syscall.SIGTERM)
+	<-shutdownSignal
+	signal.Stop(shutdownSignal)
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
+	log.Print("server shutdown started")
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer cancelShutdown()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("server shutdown failed: %v", err)
 	}
 
-	log.Print("server stopped")
+	log.Print("server shutdown complete")
 }
 
 func healthzHandler(w http.ResponseWriter, r *http.Request) {
