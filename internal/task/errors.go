@@ -2,10 +2,14 @@ package task
 
 import "errors"
 
-// Domain errors give upper layers stable failure meanings.
-// This file should contain task-specific error values.
-// HTTP status codes, SQL driver errors, and response bodies must not live here.
+// Sentinel errors give upper layers stable failure meanings that can be mapped
+// to HTTP responses by handlers.
+// Wrapped errors must preserve errors.Is compatibility so callers can still
+// detect these cases without depending on lower-level implementation details.
 var (
-	ErrTaskNotFound = errors.New("task not found")
-	ErrInvalidTask  = errors.New("invalid task")
+	ErrTaskNotFound      = errors.New("task not found")
+	ErrInvalidTitle      = errors.New("invalid title")
+	ErrInvalidStatus     = errors.New("invalid status")
+	ErrInvalidPagination = errors.New("invalid pagination")
+	ErrNoFieldsToUpdate  = errors.New("no fields to update")
 )

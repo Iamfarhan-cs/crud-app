@@ -878,3 +878,79 @@ Delete operations should also target only active rows. Repeating a delete agains
 - Stale updates detected by version mismatch should return `409 Conflict`.
 - `POST` retries should eventually support an idempotency key to prevent duplicate creates.
 - This phase does not change the database schema; `version INTEGER` is future work.
+
+## Build Phase D: PostgreSQL Repository Implementation
+
+Build Phase D adds the PostgreSQL-backed task repository in `internal/task/postgres_repository.go`.
+
+The repository implements the task `Repository` interface using `database/sql` and keeps SQL behavior inside the persistence layer. Services continue to depend on the interface instead of depending directly on PostgreSQL.
+
+### Repository Construction
+
+The PostgreSQL repository is represented by:
+
+- `PostgresRepository`
+- `NewPostgresRepository(db *sql.DB) *PostgresRepository`
+
+The repository stores a shared `*sql.DB` handle and uses context-aware database calls for every operation.
+
+### Implemented Methods
+
+The PostgreSQL repository implements:
+
+- `Create`
+- `FindActiveByID`
+- `ListActive`
+- `UpdateActive`
+- `SoftDelete`
+
+`Create` inserts task fields and uses `RETURNING` to read back the stored row.
+
+`FindActiveByID` selects a task by ID only when `deleted_at IS NULL`.
+
+`ListActive` selects active tasks ordered by `created_at DESC` and uses `LIMIT` and `OFFSET` placeholders for bounded list reads.
+
+`UpdateActive` updates task fields only when the row is active and uses `RETURNING` to read back the updated row.
+
+`SoftDelete` updates `deleted_at` and `updated_at` with `NOW()` instead of physically deleting the row.
+
+### SQL Safety and Lifecycle Rules
+
+All SQL uses positional parameters. No user input is concatenated into SQL strings.
+
+The repository avoids `SELECT *` and explicitly selects task columns:
+
+- `id`
+- `title`
+- `description`
+- `status`
+- `created_at`
+- `updated_at`
+- `deleted_at`
+
+Normal reads exclude soft-deleted rows with `deleted_at IS NULL`.
+
+Updates also require `deleted_at IS NULL`, so soft-deleted tasks cannot be modified by normal update operations.
+
+Missing active records return `ErrTaskNotFound`. Unexpected database failures are wrapped with contextual messages using `fmt.Errorf` so callers can preserve the original error while still getting useful operational context.
+
+### Supporting Contract Alignment
+
+Because this branch was created from `main`, Build Phase D also aligns the task contracts needed by the PostgreSQL repository:
+
+- `Task` includes nullable `Description` and `DeletedAt` fields.
+- `Status` uses the database-supported values `pending`, `in_progress`, and `done`.
+- Create, update, and response DTOs match the current task table fields.
+- `Repository.ListActive` accepts `limit` and `offset`.
+- Task sentinel errors include not-found, validation, pagination, and empty-update cases.
+
+### Build Phase D Non-Goals
+
+Build Phase D does not include:
+
+- HTTP handlers.
+- Route registration.
+- Application wiring.
+- Database connection startup changes.
+- Service behavior changes.
+- PostgreSQL migrations beyond the existing task table migration.
