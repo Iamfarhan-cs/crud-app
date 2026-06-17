@@ -879,6 +879,73 @@ Delete operations should also target only active rows. Repeating a delete agains
 - `POST` retries should eventually support an idempotency key to prevent duplicate creates.
 - This phase does not change the database schema; `version INTEGER` is future work.
 
+## Build Phase B: Errors and Repository Contract
+
+Build Phase B defines the task error vocabulary in `internal/task/errors.go` and the persistence boundary in `internal/task/repository.go`.
+
+### Sentinel Errors
+
+The task package now exposes sentinel errors for stable failure cases:
+
+- `ErrTaskNotFound`
+- `ErrInvalidTitle`
+- `ErrInvalidStatus`
+- `ErrInvalidPagination`
+- `ErrNoFieldsToUpdate`
+
+These errors give upper layers stable values that can later be mapped to HTTP responses. Handlers can translate them into response codes and bodies without tying service or repository code to HTTP behavior.
+
+Wrapped errors must preserve `errors.Is` compatibility. This lets future service or repository implementations add context to an error while still allowing callers to detect the original task failure category.
+
+The repository is an interface, not a PostgreSQL implementation. This keeps the service layer dependent on a stable task storage contract instead of depending directly on PostgreSQL, SQL queries, connection details, or any specific database package.
+
+### Repository Methods
+
+The task repository contract now exposes these methods:
+
+- `Create(ctx context.Context, task Task) (Task, error)`
+- `FindActiveByID(ctx context.Context, id string) (Task, error)`
+- `ListActive(ctx context.Context, limit int, offset int) ([]Task, error)`
+- `UpdateActive(ctx context.Context, task Task) (Task, error)`
+- `SoftDelete(ctx context.Context, id string) error`
+
+`ListActive` accepts `limit` and `offset` so future list queries can stay bounded and support pagination without changing the repository shape later.
+
+### Active Task Meaning
+
+`Active` means `deleted_at IS NULL`.
+
+This makes the soft-delete lifecycle visible in the method names:
+
+- Active reads ignore soft-deleted tasks.
+- Active lists return only non-deleted tasks.
+- Active updates cannot modify deleted tasks.
+- Soft delete marks a task as deleted instead of physically removing the row.
+
+### Repository Boundary Rules
+
+Repository implementations must use parameterized SQL and must never concatenate user input into query strings.
+
+The repository must not contain HTTP concerns such as:
+
+- Status codes.
+- Request parsing.
+- Response formatting.
+- Route behavior.
+
+The repository also must not make business-policy decisions. Those belong in the service layer, which can decide how to interpret repository results and which domain rules apply to create, update, read, and delete workflows.
+
+### Build Phase B Non-Goals
+
+Build Phase B does not include:
+
+- PostgreSQL query implementation.
+- Service logic.
+- HTTP handlers.
+- Route registration.
+- Request validation.
+- Business-rule enforcement.
+- HTTP error mapping implementation.
 ## Build Phase A: Domain Model
 
 Build Phase A defines the task domain model and the API-facing request and response shapes in `internal/task/model.go`.
