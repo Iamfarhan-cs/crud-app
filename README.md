@@ -1273,6 +1273,82 @@ Build Phase D does not include:
 - Service behavior changes.
 - PostgreSQL migrations beyond the existing task table migration.
 
+## Build Phase F: Application Wiring
+
+Build Phase F wires the application together across configuration, database startup, repository construction, service construction, handler registration, and graceful shutdown.
+
+This phase updates:
+
+- `internal/config/config.go`
+- `internal/database/postgres.go`
+- `cmd/api/main.go`
+
+### Configuration
+
+The config package now loads runtime settings from environment variables.
+
+`DATABASE_URL` is required. If it is missing, startup fails fast with an error. Secrets are not hardcoded; the database connection string must come from the environment or a managed secret provider.
+
+`PORT` defaults to `8080`.
+
+The HTTP timeout settings are configurable:
+
+- `READ_TIMEOUT`, default `5s`
+- `WRITE_TIMEOUT`, default `10s`
+- `IDLE_TIMEOUT`, default `60s`
+- `SHUTDOWN_TIMEOUT`, default `10s`
+
+The PostgreSQL pool settings are configurable:
+
+- `DB_MAX_OPEN_CONNECTIONS`, default `10`
+- `DB_MAX_IDLE_CONNECTIONS`, default `5`
+- `DB_CONNECTION_MAX_LIFE`, default `30m`
+
+Duration values are parsed with `time.ParseDuration`. Integer values are parsed with `strconv.Atoi`.
+
+### PostgreSQL Startup
+
+The database package now opens real PostgreSQL connections with `database/sql` and the `github.com/lib/pq` driver.
+
+`OpenPostgres`:
+
+- Opens the database handle.
+- Sets max open connections.
+- Sets max idle connections.
+- Sets connection max lifetime.
+- Verifies connectivity with `PingContext`.
+- Closes the database handle if ping fails.
+- Wraps startup errors with contextual messages.
+
+### API Startup
+
+`cmd/api/main.go` now performs application composition:
+
+- Loads configuration.
+- Creates a startup context with a `10s` timeout.
+- Opens PostgreSQL.
+- Defers `db.Close()`.
+- Creates the task PostgreSQL repository.
+- Creates the task service.
+- Creates the task handler.
+- Creates an `http.ServeMux`.
+- Registers `/healthz`.
+- Registers task routes through the handler.
+- Creates an `http.Server` with configured address and timeouts.
+- Runs the server in a goroutine.
+- Listens for `os.Interrupt` and `syscall.SIGTERM`.
+- Performs graceful shutdown using the configured shutdown timeout.
+- Logs startup and shutdown events.
+
+### Build Phase F Non-Goals
+
+Build Phase F does not include:
+
+- Database migrations.
+- Tests.
+- Authentication or authorization.
+- Production deployment manifests.
+- Background workers.
 ## Build Phase E: HTTP Handlers Implementation
 
 Build Phase E implements the task HTTP handler layer in `internal/task/handler.go`.
