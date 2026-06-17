@@ -10,6 +10,11 @@ import "context"
 // Repository code must not contain HTTP concerns such as status codes, request
 // parsing, response formatting, or route behavior.
 // Business rules and business-policy decisions belong in the service layer.
+// Repository implementations must use parameterized SQL only and must never
+// concatenate user input into query strings.
+// Repository code must not contain HTTP concerns such as status codes, request
+// parsing, response formatting, or route behavior.
+// Business rules and business-policy decisions belong in the service layer.
 // Repository defines the persistence boundary for tasks.
 // Implementations should store and retrieve task data using context-aware
 // database calls so request cancellation and query timeouts can be enforced.

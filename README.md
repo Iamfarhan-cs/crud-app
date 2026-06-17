@@ -879,6 +879,87 @@ Delete operations should also target only active rows. Repeating a delete agains
 - `POST` retries should eventually support an idempotency key to prevent duplicate creates.
 - This phase does not change the database schema; `version INTEGER` is future work.
 
+## Build Phase C: Service Layer Implementation
+
+Build Phase C implements the task service in `internal/task/service.go`.
+
+The service layer now owns task business rules and use-case orchestration while continuing to depend on the `Repository` interface instead of PostgreSQL directly.
+
+### Service Methods
+
+The task service exposes these use-case methods:
+
+- `CreateTask(ctx context.Context, req CreateTaskRequest) (TaskResponse, error)`
+- `GetTask(ctx context.Context, id string) (TaskResponse, error)`
+- `ListTasks(ctx context.Context, page int, limit int) ([]TaskResponse, error)`
+- `UpdateTask(ctx context.Context, id string, req UpdateTaskRequest) (TaskResponse, error)`
+- `DeleteTask(ctx context.Context, id string) error`
+
+### Create Behavior
+
+Create behavior now includes service-level defaults and server-owned fields:
+
+- Titles are trimmed and must not be empty.
+- Missing status defaults to `pending`.
+- Provided status must be `pending`, `in_progress`, or `done`.
+- IDs are generated with `uuid.NewString()`.
+- `CreatedAt` and `UpdatedAt` are set with `time.Now().UTC()`.
+
+### Update Behavior
+
+Update behavior follows PATCH semantics:
+
+- A request must include at least one update field.
+- A nil field means the client did not provide that field.
+- Provided titles are trimmed and must not be empty.
+- Provided status values must be valid.
+- The service loads the existing active task before applying changes.
+- `UpdatedAt` is refreshed with `time.Now().UTC()`.
+
+### Read, List, and Delete Behavior
+
+The service trims task IDs before read and delete operations. An empty ID returns `ErrTaskNotFound`.
+
+List behavior normalizes pagination:
+
+- Page `0` defaults to `1`.
+- Limit `0` defaults to `20`.
+- Page must be at least `1`.
+- Limit must be between `1` and `100`.
+- Invalid pagination returns `ErrInvalidPagination`.
+
+Delete behavior calls `SoftDelete`, keeping the soft-delete policy at the repository boundary.
+
+### Service Helpers
+
+The service also includes small helper functions:
+
+- `validateTitle`
+- `validateStatus`
+- `normalizePagination`
+- `toResponse`
+
+These keep validation, pagination normalization, and response mapping focused inside the service layer.
+
+### Supporting Contract Alignment
+
+Because this branch was created from `main`, Build Phase C also aligns the task contracts that the service depends on:
+
+- `Task` now includes `Description *string` and `DeletedAt *time.Time`.
+- `Status` now uses `pending`, `in_progress`, and `done`.
+- Create, update, and response DTOs match the service-owned task fields.
+- Repository list operations accept `limit` and `offset`.
+- Task sentinel errors include validation, pagination, not-found, and empty-update cases.
+
+### Build Phase C Non-Goals
+
+Build Phase C does not include:
+
+- PostgreSQL repository implementation.
+- SQL queries.
+- HTTP handlers.
+- Route registration.
+- Authentication or authorization.
 ## Build Phase B: Errors and Repository Contract
 
 Build Phase B defines the task error vocabulary in `internal/task/errors.go` and the persistence boundary in `internal/task/repository.go`.
