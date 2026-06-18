@@ -1433,3 +1433,68 @@ Build Phase F does not include:
 - Production deployment manifests.
 - Background workers.
 
+## Build Phase H: Testing
+
+Build Phase H adds focused unit tests for the task service and HTTP handler layers.
+
+This phase updates:
+
+- `internal/task/service_test.go`
+- `internal/task/handler_test.go`
+
+### Service Tests
+
+The service tests use a package-local `fakeRepository` that implements the `Repository` interface with an in-memory `map[string]Task`.
+
+The fake repository supports:
+
+- `Create`
+- `FindActiveByID`
+- `ListActive`
+- `UpdateActive`
+- `SoftDelete`
+
+`FindActiveByID` and `UpdateActive` return `ErrTaskNotFound` when a task is missing or already soft-deleted. `SoftDelete` sets both `DeletedAt` and `UpdatedAt` so tests exercise the soft-delete behavior expected by the service layer.
+
+The service coverage verifies:
+
+- Creating a task generates an ID, trims the title, and defaults status to `pending`.
+- Whitespace-only titles return `ErrInvalidTitle`.
+- Invalid statuses return `ErrInvalidStatus`.
+- Partial updates change only the provided fields.
+- Empty updates return `ErrNoFieldsToUpdate`.
+- Deleted tasks are hidden from future `GetTask` calls.
+- List requests with a limit above `MaxListLimit` return `ErrInvalidPagination`.
+
+### Handler Tests
+
+The handler tests use `net/http/httptest` with the real task handler routes and the service wired to the fake repository.
+
+The handler coverage verifies:
+
+- Successful create requests return `201 Created`.
+- Invalid JSON returns `400 INVALID_JSON`.
+- Invalid titles return `400 INVALID_TITLE`.
+- Missing tasks return `404 TASK_NOT_FOUND`.
+- Invalid pagination queries return `400 INVALID_PAGINATION`.
+- Unsupported methods return `405 METHOD_NOT_ALLOWED`.
+- Unknown service or repository errors return `500 INTERNAL_ERROR`.
+
+### Expected Test Command
+
+The expected verification command for this phase is:
+
+```text
+go test ./...
+```
+
+### Build Phase H Non-Goals
+
+Build Phase H does not include:
+
+- Repository integration tests.
+- Docker.
+- CI.
+- Test database setup.
+- End-to-end HTTP tests against a running server.
+
