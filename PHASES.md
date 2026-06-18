@@ -608,6 +608,43 @@ This avoided testing only happy paths, requiring Docker for every unit test, and
 
 Commit: https://github.com/Iamfarhan-cs/crud-app/commit/143fdd42217174657a6ce0b27a15f6a2133e9d3e
 
+# Phase I: Dockerization
+
+## Goal
+
+Containerize the API and PostgreSQL database so the backend can be built and run consistently across developer machines.
+
+## What Changed
+
+The project added a multi-stage Docker build for the Go API, a Docker Compose setup for the API and PostgreSQL, a Docker ignore file, and an example environment file for local container configuration.
+
+## Files Changed
+
+* `Dockerfile` - multi-stage API image build.
+* `docker-compose.yml` - local API and PostgreSQL orchestration.
+* `.dockerignore` - excludes local and Git-only files from the Docker build context.
+* `.env.example` - documents local environment values without production secrets.
+
+## Feature Flow
+
+Docker Compose -> PostgreSQL container starts -> migration SQL initializes the task table -> API container builds from the Dockerfile -> API connects to PostgreSQL through the Compose network.
+
+## Engineering Reasoning
+
+Dockerization was added after the application could run normally because containers should package known behavior, not hide unfinished wiring. The multi-stage build keeps the runtime image smaller by leaving Go build tooling in the builder image.
+
+## Production Notes
+
+The Compose setup is useful for local development, but production still needs real secret management, deployment configuration, backup strategy, and observability. Database readiness matters because the API depends on PostgreSQL being healthy before startup.
+
+## Common Mistakes Avoided
+
+This avoided shipping the full Go toolchain in the runtime image, copying `.git` and local environment files into the image context, and starting the API before PostgreSQL is ready.
+
+## Commit Link
+
+Commit: https://github.com/Iamfarhan-cs/crud-app/commit/5ca748284389b19fb51920ac3260fd105e6d56cf
+
 # Summary Table
 
 | Phase | Feature | Main Files Changed | Commit Link | Status |
@@ -629,3 +666,4 @@ Commit: https://github.com/Iamfarhan-cs/crud-app/commit/143fdd42217174657a6ce0b2
 | Phase F | Application wiring | `cmd/api/main.go`, `internal/config/config.go`, `internal/database/postgres.go`, `README.md` | https://github.com/Iamfarhan-cs/crud-app/commit/f37215443e93a89a35955b6ff03e6e53fb3c9562 | Complete |
 | Phase G | Database migrations | `migrations/*`, `README.md` | https://github.com/Iamfarhan-cs/crud-app/commit/bae6204dcb03a02c4211ce00744ca7cbaa6679be | Complete |
 | Phase H | Testing | `internal/task/service_test.go`, `internal/task/handler_test.go`, `README.md` | https://github.com/Iamfarhan-cs/crud-app/commit/143fdd42217174657a6ce0b27a15f6a2133e9d3e | Complete |
+| Phase I | Dockerization | `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `.env.example` | https://github.com/Iamfarhan-cs/crud-app/commit/5ca748284389b19fb51920ac3260fd105e6d56cf | Complete |
