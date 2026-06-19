@@ -385,20 +385,20 @@ go test ./...
 | `make vet` | `go vet ./...` |
 | `make docker-up` | `docker compose up --build` |
 | `make docker-down` | `docker compose down` |
-| `make docker-reset` | `docker compose down -v` then `docker compose up --build` |
+| `make docker-reset` | `docker compose down -v && docker compose up --build` |
 
 ## Deployment Checklist
 
 - `DATABASE_URL` configured
 - migrations applied
-- healthz works
-- readyz works
+- `/healthz` works
+- `/readyz` works
 - request IDs in logs
 - graceful shutdown enabled
 - request body limit enabled
 - DB pool configured
 - tests pass
-- `.env` is not committed
+- `.env` not committed
 - production secrets not in Git
 
 ## Production Notes
