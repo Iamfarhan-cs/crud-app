@@ -645,6 +645,79 @@ This avoided shipping the full Go toolchain in the runtime image, copying `.git`
 
 Commit: https://github.com/Iamfarhan-cs/crud-app/commit/5ca748284389b19fb51920ac3260fd105e6d56cf
 
+# Build Phase K: Deployment Readiness
+
+## Goal
+
+Make the project easier to run, verify, and prepare for deployment by documenting operational commands, environment expectations, API usage, and production readiness checks.
+
+## What Changed
+
+The project added a Makefile with common local and Docker commands. The README was expanded into a deployment-ready project guide with architecture, environment variables, endpoint references, health checks, curl examples, test commands, reset commands, error format, deployment checklist, and production notes.
+
+## Files Changed
+
+* `Makefile` - added common run, test, formatting, vetting, and Docker lifecycle commands.
+* `README.md` - expanded project documentation for local use and deployment readiness.
+* `PHASES.md` - documented the deployment readiness phase.
+
+## Makefile Flow
+
+Developer command -> Make target -> underlying Go or Docker command.
+
+`make run` starts the API with `go run ./cmd/api`. `make test`, `make fmt`, and `make vet` run the standard Go checks. `make docker-up`, `make docker-down`, and `make docker-reset` wrap the Docker Compose workflow so local setup and database resets use predictable commands.
+
+## README Documentation Flow
+
+Project overview -> features -> architecture -> setup -> environment variables -> migrations -> Docker workflow -> endpoints -> health and readiness checks -> curl examples -> tests -> deployment checklist -> production notes -> phase tracker.
+
+This keeps the README useful both for a developer running the service locally and for someone reviewing whether the project is ready to deploy.
+
+## Engineering Reasoning
+
+Deployment readiness is mostly about repeatability. The Makefile avoids asking each developer to remember long commands, while the README turns operational assumptions into visible documentation.
+
+The checklist captures the minimum runtime expectations before deploying: database configuration, migrations, health and readiness checks, logs, graceful shutdown, request limits, DB pooling, tests, and secret hygiene.
+
+## Production Notes
+
+This phase does not add production infrastructure by itself. It prepares the project for that work by making current runtime behavior explicit.
+
+Future production improvements include authentication, authorization, CI/CD, an external migration runner, structured JSON logging, Prometheus metrics, OpenTelemetry tracing, rate limiting, caching, and a scaling strategy.
+
+## Common Mistakes Avoided
+
+This avoided burying operational commands in memory, omitting reset instructions for the Docker database, mixing production secrets into documentation, adding CI/CD before the project asks for it, and changing business logic during a documentation and deployment-readiness phase.
+
+## How To Test
+
+Run:
+
+```bash
+make test
+make vet
+```
+
+Equivalent direct commands:
+
+```bash
+go test ./...
+go vet ./...
+```
+
+Optional Docker check:
+
+```bash
+make docker-up
+curl -i http://localhost:8080/healthz
+curl -i http://localhost:8080/readyz
+make docker-down
+```
+
+## Commit Link
+
+Commit: https://github.com/Iamfarhan-cs/crud-app/commit/27a9aea214c9febfceea4bf0923d1e84ac6fe673
+
 # Summary Table
 
 | Phase | Feature | Main Files Changed | Commit Link | Status |
@@ -667,3 +740,4 @@ Commit: https://github.com/Iamfarhan-cs/crud-app/commit/5ca748284389b19fb51920ac
 | Phase G | Database migrations | `migrations/*`, `README.md` | https://github.com/Iamfarhan-cs/crud-app/commit/bae6204dcb03a02c4211ce00744ca7cbaa6679be | Complete |
 | Phase H | Testing | `internal/task/service_test.go`, `internal/task/handler_test.go`, `README.md` | https://github.com/Iamfarhan-cs/crud-app/commit/143fdd42217174657a6ce0b27a15f6a2133e9d3e | Complete |
 | Phase I | Dockerization | `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `.env.example` | https://github.com/Iamfarhan-cs/crud-app/commit/5ca748284389b19fb51920ac3260fd105e6d56cf | Complete |
+| Build Phase K | Deployment readiness | `Makefile`, `README.md`, `PHASES.md` | https://github.com/Iamfarhan-cs/crud-app/commit/27a9aea214c9febfceea4bf0923d1e84ac6fe673 | Complete |
