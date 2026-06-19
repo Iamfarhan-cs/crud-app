@@ -716,7 +716,7 @@ make docker-down
 
 ## Commit Link
 
-Commit link missing — needs to be added after commit.
+Commit: https://github.com/Iamfarhan-cs/crud-app/commit/27a9aea214c9febfceea4bf0923d1e84ac6fe673
 
 # Summary Table
 
@@ -740,4 +740,4 @@ Commit link missing — needs to be added after commit.
 | Phase G | Database migrations | `migrations/*`, `README.md` | https://github.com/Iamfarhan-cs/crud-app/commit/bae6204dcb03a02c4211ce00744ca7cbaa6679be | Complete |
 | Phase H | Testing | `internal/task/service_test.go`, `internal/task/handler_test.go`, `README.md` | https://github.com/Iamfarhan-cs/crud-app/commit/143fdd42217174657a6ce0b27a15f6a2133e9d3e | Complete |
 | Phase I | Dockerization | `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `.env.example` | https://github.com/Iamfarhan-cs/crud-app/commit/5ca748284389b19fb51920ac3260fd105e6d56cf | Complete |
-| Build Phase K | Deployment readiness | `Makefile`, `README.md`, `PHASES.md` | Commit link missing — needs to be added after commit. | Complete |
+| Build Phase K | Deployment readiness | `Makefile`, `README.md`, `PHASES.md` | https://github.com/Iamfarhan-cs/crud-app/commit/27a9aea214c9febfceea4bf0923d1e84ac6fe673 | Complete |
