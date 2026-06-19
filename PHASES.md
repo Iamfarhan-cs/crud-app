@@ -645,6 +645,77 @@ This avoided shipping the full Go toolchain in the runtime image, copying `.git`
 
 Commit: https://github.com/Iamfarhan-cs/crud-app/commit/5ca748284389b19fb51920ac3260fd105e6d56cf
 
+# Build Phase J: Observability
+
+## Goal
+
+Add basic HTTP observability so every request can be traced through logs, operational readiness can be checked through the API, and unexpected panics return a stable internal-error response.
+
+## What Changed
+
+The project added middleware for request IDs, request logging, and panic recovery. The API server now wraps the mux with the observability middleware chain and exposes `/readyz` for database readiness checks.
+
+## Files Changed
+
+* `internal/httpx/middleware.go` - request ID, logging, status recording, and panic recovery middleware.
+* `cmd/api/main.go` - middleware wiring and `/readyz` database readiness endpoint.
+* `PHASES.md` - documented the observability phase.
+
+## Middleware Flow
+
+HTTP request -> `RecoverMiddleware` catches panics -> `RequestIDMiddleware` preserves or generates `X-Request-ID` -> `LoggingMiddleware` records method, path, status, duration, bytes, remote address, and request ID -> mux routes the request.
+
+The wrapper order keeps panic protection around the full request path, ensures request IDs are available to downstream handlers and logs, and measures the final status and response size.
+
+## Readiness Flow
+
+`GET /readyz` -> create a request-scoped context with a 2 second timeout -> call `db.PingContext` -> return `200 {"status":"ready"}` when PostgreSQL is reachable -> return `503 {"status":"not_ready"}` when PostgreSQL is unavailable.
+
+The endpoint always returns JSON and is separate from `/healthz`, so a process can be alive while still reporting that a dependency is not ready.
+
+## Engineering Reasoning
+
+Observability was added at the HTTP boundary because every API request passes through that layer. The middleware keeps cross-cutting concerns out of task business logic, while the status recorder gives logs access to the final response status and byte count without changing handlers.
+
+Readiness checks use `PingContext` with a short timeout to avoid hanging health probes when the database is slow or unreachable.
+
+## Production Notes
+
+Request IDs should be propagated by clients, gateways, or load balancers when available. Generated IDs are random 16 byte hex strings, with a UnixNano fallback only for rare random-source failures.
+
+The current logs use the standard library logger and key-value style text. A future production phase can move these fields into structured logging, metrics, tracing, or centralized log collection.
+
+## Common Mistakes Avoided
+
+This avoided logging only successful requests, losing client-provided request IDs, exposing panic details to API clients, blocking readiness checks without a timeout, and mixing observability behavior into task handlers or service logic.
+
+## How To Test
+
+Run:
+
+```bash
+go test ./...
+```
+
+Manual checks:
+
+```bash
+curl -i http://localhost:8080/healthz
+curl -i http://localhost:8080/readyz
+curl -i -H "X-Request-ID: local-test-id" http://localhost:8080/healthz
+```
+
+Expected behavior:
+
+* Responses include `X-Request-ID`.
+* Logs include method, path, status, duration_ms, bytes, remote_addr, and request_id.
+* `/readyz` returns `200 {"status":"ready"}` when the database ping succeeds.
+* `/readyz` returns `503 {"status":"not_ready"}` when the database ping fails.
+
+## Commit Link
+
+Commit link missing — needs to be added after commit.
+
 # Summary Table
 
 | Phase | Feature | Main Files Changed | Commit Link | Status |
@@ -667,3 +738,4 @@ Commit: https://github.com/Iamfarhan-cs/crud-app/commit/5ca748284389b19fb51920ac
 | Phase G | Database migrations | `migrations/*`, `README.md` | https://github.com/Iamfarhan-cs/crud-app/commit/bae6204dcb03a02c4211ce00744ca7cbaa6679be | Complete |
 | Phase H | Testing | `internal/task/service_test.go`, `internal/task/handler_test.go`, `README.md` | https://github.com/Iamfarhan-cs/crud-app/commit/143fdd42217174657a6ce0b27a15f6a2133e9d3e | Complete |
 | Phase I | Dockerization | `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `.env.example` | https://github.com/Iamfarhan-cs/crud-app/commit/5ca748284389b19fb51920ac3260fd105e6d56cf | Complete |
+| Build Phase J | Observability | `internal/httpx/middleware.go`, `cmd/api/main.go`, `PHASES.md` | Commit link missing — needs to be added after commit. | Complete |
