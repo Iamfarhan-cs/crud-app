@@ -12,6 +12,7 @@ import (
 
 	"github.com/Iamfarhan-cs/crud-app/internal/config"
 	"github.com/Iamfarhan-cs/crud-app/internal/database"
+	"github.com/Iamfarhan-cs/crud-app/internal/httpx"
 	"github.com/Iamfarhan-cs/crud-app/internal/task"
 )
 
@@ -41,11 +42,18 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthzHandler)
+	mux.HandleFunc("/readyz", readyzHandler(db))
 	taskHandler.RegisterRoutes(mux)
+
+	handler := httpx.RecoverMiddleware(
+		httpx.RequestIDMiddleware(
+			httpx.LoggingMiddleware(mux),
+		),
+	)
 
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      mux,
+		Handler:      handler,
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
 		IdleTimeout:  cfg.IdleTimeout,
@@ -83,4 +91,29 @@ func healthzHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok\n"))
+}
+
+func readyzHandler(db interface {
+	PingContext(context.Context) error
+}) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := db.PingContext(ctx); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":"not_ready"}`))
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ready"}`))
+	}
 }
